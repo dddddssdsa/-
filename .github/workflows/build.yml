@@ -1,34 +1,31 @@
-name: build-deb
-
+name: build-deb-v2
 on:
   push:
   workflow_dispatch:
-
+concurrency:
+  group: jbhider-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: macos-13
-    timeout-minutes: 30
-
+    timeout-minutes: 40
     steps:
       - name: 1. 生成工程文件
         run: |
           set -e
+          date +%H:%M:%S
           mkdir -p JBHider/layout/DEBIAN JBHider/layout/usr/lib/jbhider/shims
           cat > JBHider/Makefile <<'JBEOF_1'
           ARCHS = arm64 arm64e
           TARGET = iphone:clang:15.6:15.0
           INSTALL_TARGET_PROCESSES = SpringBoard
-
           # 无根越狱包（安装到 /var/jb）
           THEOS_PACKAGE_SCHEME = rootless
-
           include $(THEOS)/makefiles/common.mk
-
           TWEAK_NAME = JBHider
           JBHider_FILES = Tweak.xm
           JBHider_CFLAGS = -fobjc-arc -Wno-unused-function
           JBHider_FRAMEWORKS = Foundation UIKit
-
           include $(THEOS_MAKE_PATH)/tweak.mk
           JBEOF_1
           cat > JBHider/control <<'JBEOF_2'
@@ -71,7 +68,6 @@ jobs:
           //
           //  编译：Theos（rootless 方案），见 Makefile 与 README。
           //
-
           #import <Foundation/Foundation.h>
           #import <UIKit/UIKit.h>
           #import <sys/stat.h>
@@ -87,11 +83,9 @@ jobs:
           #import <spawn.h>
           #import <stdarg.h>
           #import <substrate.h>
-
           // ===========================================================================
           // 0. 隐藏特征表
           // ===========================================================================
-
           static const char *kHideTokens[] = {
               // 无根前缀与 preboot
               "/var/jb",
@@ -124,7 +118,6 @@ jobs:
               "/.bootstrapped",
               NULL
           };
-
           static inline bool jb_hidden(const char *path)
           {
               if (path == NULL || path[0] != '/') {
@@ -137,17 +130,14 @@ jobs:
               }
               return false;
           }
-
           static inline int jb_deny(void)
           {
               errno = ENOENT;
               return -1;
           }
-
           // ===========================================================================
           // 1. L1 — 文件系统层
           // ===========================================================================
-
           static int (*orig_stat)(const char *, struct stat *);
           static int (*orig_lstat)(const char *, struct stat *);
           static int (*orig_stat64)(const char *, struct stat64 *);
@@ -160,43 +150,36 @@ jobs:
           static ssize_t (*orig_readlink)(const char *, char *, size_t);
           static int (*orig_statfs)(const char *, struct statfs *);
           static int (*orig_statfs64)(const char *, struct statfs64 *);
-
           static int hook_stat(const char *p, struct stat *b)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_stat(p, b);
           }
-
           static int hook_lstat(const char *p, struct stat *b)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_lstat(p, b);
           }
-
           static int hook_stat64(const char *p, struct stat64 *b)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_stat64(p, b);
           }
-
           static int hook_lstat64(const char *p, struct stat64 *b)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_lstat64(p, b);
           }
-
           static int hook_access(const char *p, int mode)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_access(p, mode);
           }
-
           static int hook_faccessat(int fd, const char *p, int mode, int flag)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_faccessat(fd, p, mode, flag);
           }
-
           static int hook_open(const char *p, int flags, ...)
           {
               mode_t mode = 0;
@@ -209,7 +192,6 @@ jobs:
               if (jb_hidden(p)) return jb_deny();
               return orig_open(p, flags, mode);
           }
-
           static int hook_openat(int fd, const char *p, int flags, ...)
           {
               mode_t mode = 0;
@@ -222,7 +204,6 @@ jobs:
               if (jb_hidden(p)) return jb_deny();
               return orig_openat(fd, p, flags, mode);
           }
-
           static DIR *hook_opendir(const char *p)
           {
               if (jb_hidden(p)) {
@@ -231,31 +212,25 @@ jobs:
               }
               return orig_opendir(p);
           }
-
           static ssize_t hook_readlink(const char *p, char *buf, size_t cap)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_readlink(p, buf, cap);
           }
-
           static int hook_statfs(const char *p, struct statfs *b)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_statfs(p, b);
           }
-
           static int hook_statfs64(const char *p, struct statfs64 *b)
           {
               if (jb_hidden(p)) return jb_deny();
               return orig_statfs64(p, b);
           }
-
           // ===========================================================================
           // 2. L2 — 环境变量层
           // ===========================================================================
-
           static char *(*orig_getenv)(const char *);
-
           static const char *kHideEnv[] = {
               "DYLD_INSERT_LIBRARIES",
               "DYLD_LIBRARY_PATH",
@@ -268,9 +243,7 @@ jobs:
               "JB_TWEAK",
               NULL
           };
-
           static char gCleanPath[4096];
-
           static const char *jb_clean_path(void)
           {
               const char *raw = orig_getenv("PATH");
@@ -280,13 +253,11 @@ jobs:
               if (gCleanPath[0] != '\0') {
                   return gCleanPath;
               }
-
               size_t out = 0;
               const char *p = raw;
               while (*p != '\0' && out + 1 < sizeof(gCleanPath)) {
                   const char *colon = strchr(p, ':');
                   size_t len = (colon != NULL) ? (size_t)(colon - p) : strlen(p);
-
                   bool dirty = false;
                   if (len > 0) {
                       char seg[512];
@@ -297,7 +268,6 @@ jobs:
                           dirty = true;
                       }
                   }
-
                   if (!dirty && len > 0) {
                       if (out > 0) {
                           gCleanPath[out++] = ':';
@@ -305,7 +275,6 @@ jobs:
                       memcpy(gCleanPath + out, p, len);
                       out += len;
                   }
-
                   if (colon == NULL) {
                       break;
                   }
@@ -314,7 +283,6 @@ jobs:
               gCleanPath[out] = '\0';
               return gCleanPath;
           }
-
           static char *hook_getenv(const char *name)
           {
               if (name == NULL) {
@@ -330,16 +298,13 @@ jobs:
               }
               return orig_getenv(name);
           }
-
           // ===========================================================================
           // 3. L3 — 内核层：进程列表 / 签名 / fork / dyld 镜像
           // ===========================================================================
-
           static int (*orig_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
           static int (*orig_csops)(pid_t, unsigned int, void *, size_t);
           static pid_t (*orig_fork)(void);
           static const char *(*orig_dyld_get_image_name)(uint32_t);
-
           static const char *kHideProcs[] = {
               "jailbreakd",
               "ElleKit",
@@ -350,28 +315,23 @@ jobs:
               "tweakd",
               NULL
           };
-
           static int hook_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
                                  void *newp, size_t newlen)
           {
               int ret = orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
-
               if (ret != 0 || oldp == NULL || oldlenp == NULL || namelen < 3) {
                   return ret;
               }
               if (name[0] != CTL_KERN || name[1] != KERN_PROC || name[2] != KERN_PROC_ALL) {
                   return ret;
               }
-
               struct kinfo_proc *procs = (struct kinfo_proc *)oldp;
               size_t total = *oldlenp / sizeof(struct kinfo_proc);
               size_t kept = 0;
-
               for (size_t i = 0; i < total; i++) {
                   char comm[64];
                   memset(comm, 0, sizeof(comm));
                   memcpy(comm, procs[i].kp_proc.p_comm, sizeof(procs[i].kp_proc.p_comm));
-
                   bool hide = false;
                   for (int k = 0; kHideProcs[k] != NULL; k++) {
                       if (strstr(comm, kHideProcs[k]) != NULL) {
@@ -390,7 +350,6 @@ jobs:
               *oldlenp = kept * sizeof(struct kinfo_proc);
               return ret;
           }
-
           static int hook_csops(pid_t pid, unsigned int ops, void *addr, size_t size)
           {
               int ret = orig_csops(pid, ops, addr, size);
@@ -401,13 +360,11 @@ jobs:
               }
               return ret;
           }
-
           static pid_t hook_fork(void)
           {
               errno = EPERM;
               return -1;
           }
-
           static const char *hook_dyld_get_image_name(uint32_t index)
           {
               const char *name = orig_dyld_get_image_name(index);
@@ -416,16 +373,12 @@ jobs:
               }
               return name;
           }
-
           // ===========================================================================
           // 4. L4 — posix_spawn 劫持：把 ps / id / launchctl 换成会撒谎的 shim
           // ===========================================================================
-
           #define JB_SHIM_DIR "/var/jb/usr/lib/jbhider/shims/"
-
           static int (*orig_posix_spawn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
                                          const posix_spawnattr_t *, char *const[], char *const[]);
-
           static const char *jb_shim_for(const char *path)
           {
               if (path == NULL) {
@@ -433,13 +386,11 @@ jobs:
               }
               const char *base = strrchr(path, '/');
               base = (base != NULL) ? base + 1 : path;
-
               if (strcmp(base, "ps") == 0)        return JB_SHIM_DIR "ps";
               if (strcmp(base, "id") == 0)        return JB_SHIM_DIR "id";
               if (strcmp(base, "launchctl") == 0) return JB_SHIM_DIR "launchctl";
               return NULL;
           }
-
           static int hook_posix_spawn(pid_t *pid, const char *path,
                                       const posix_spawn_file_actions_t *fa,
                                       const posix_spawnattr_t *attr,
@@ -449,7 +400,6 @@ jobs:
               if (shim == NULL) {
                   return orig_posix_spawn(pid, path, fa, attr, argv, envp);
               }
-
               char *newArgv[64];
               int count = 0;
               if (argv != NULL) {
@@ -459,21 +409,17 @@ jobs:
               }
               newArgv[0] = (char *)shim;
               newArgv[count] = NULL;
-
               return orig_posix_spawn(pid, shim, fa, attr, newArgv, envp);
           }
-
           // ===========================================================================
           // 5. ObjC 层
           // ===========================================================================
-
           static NSError *jb_no_file_error(void)
           {
               return [NSError errorWithDomain:NSCocoaErrorDomain
                                          code:NSFileNoSuchFileError
                                      userInfo:@{ NSLocalizedDescriptionKey : @"The file doesn’t exist." }];
           }
-
           static BOOL jb_hidden_ns(NSString *path)
           {
               if (path == nil) {
@@ -481,15 +427,12 @@ jobs:
               }
               return jb_hidden(path.UTF8String);
           }
-
           %hook NSFileManager
-
           - (BOOL)fileExistsAtPath:(NSString *)path
           {
               if (jb_hidden_ns(path)) return NO;
               return %orig;
           }
-
           - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory
           {
               if (jb_hidden_ns(path)) {
@@ -498,19 +441,16 @@ jobs:
               }
               return %orig;
           }
-
           - (BOOL)isReadableFileAtPath:(NSString *)path
           {
               if (jb_hidden_ns(path)) return NO;
               return %orig;
           }
-
           - (BOOL)isWritableFileAtPath:(NSString *)path
           {
               if (jb_hidden_ns(path)) return NO;
               return %orig;
           }
-
           - (NSDictionary *)attributesOfItemAtPath:(NSString *)path error:(NSError **)error
           {
               if (jb_hidden_ns(path)) {
@@ -519,7 +459,6 @@ jobs:
               }
               return %orig;
           }
-
           - (NSArray *)contentsOfDirectoryAtPath:(NSString *)path error:(NSError **)error
           {
               if (jb_hidden_ns(path)) {
@@ -528,11 +467,8 @@ jobs:
               }
               return %orig;
           }
-
           %end
-
           %hook NSURL
-
           - (BOOL)checkResourceIsReachableAndReturnError:(NSError **)error
           {
               if (jb_hidden_ns(self.path)) {
@@ -541,11 +477,8 @@ jobs:
               }
               return %orig;
           }
-
           %end
-
           %hook NSProcessInfo
-
           - (NSDictionary *)environment
           {
               NSDictionary *original = %orig;
@@ -564,11 +497,8 @@ jobs:
               }
               return env;
           }
-
           %end
-
           %hook UIApplication
-
           - (BOOL)canOpenURL:(NSURL *)url
           {
               NSString *scheme = url.scheme.lowercaseString;
@@ -579,13 +509,10 @@ jobs:
               }
               return %orig;
           }
-
           %end
-
           // ===========================================================================
           // 6. 装配
           // ===========================================================================
-
           #define HOOK_SYM(sym, hookfn, orig)                     \
               do {                                                \
                   void *jb_sym_##hookfn = dlsym(RTLD_DEFAULT, sym); \
@@ -593,7 +520,6 @@ jobs:
                       MSHookFunction(jb_sym_##hookfn, (void *)hookfn, (void **)&orig); \
                   }                                                 \
               } while (0)
-
           %ctor
           {
               @autoreleasepool {
@@ -610,16 +536,13 @@ jobs:
                   HOOK_SYM("readlink",  hook_readlink,  orig_readlink);
                   HOOK_SYM("statfs",    hook_statfs,    orig_statfs);
                   HOOK_SYM("statfs64",  hook_statfs64,  orig_statfs64);
-
                   // L2 环境层
                   HOOK_SYM("getenv",    hook_getenv,    orig_getenv);
-
                   // L3 内核层
                   HOOK_SYM("sysctl",    hook_sysctl,    orig_sysctl);
                   HOOK_SYM("csops",     hook_csops,     orig_csops);
                   HOOK_SYM("fork",      hook_fork,      orig_fork);
                   HOOK_SYM("_dyld_get_image_name", hook_dyld_get_image_name, orig_dyld_get_image_name);
-
                   // L4 进程派生
                   HOOK_SYM("posix_spawn", hook_posix_spawn, orig_posix_spawn);
               }
@@ -629,11 +552,9 @@ jobs:
           #!/bin/sh
           # JBHider 安装后处理
           set -e
-
           chmod 0755 /var/jb/usr/lib/jbhider/shims/ps         2>/dev/null || true
           chmod 0755 /var/jb/usr/lib/jbhider/shims/id         2>/dev/null || true
           chmod 0755 /var/jb/usr/lib/jbhider/shims/launchctl  2>/dev/null || true
-
           echo ""
           echo "=========================================================="
           echo " JBHider 已安装（注入所有 UIKit 进程）"
@@ -642,18 +563,15 @@ jobs:
           echo " 卸载: dpkg -r com.jbscope.jbhider"
           echo "=========================================================="
           echo ""
-
           if [ "${JBHIDER_NO_RESPRING:-0}" = "1" ]; then
               echo "已跳过 respring（JBHIDER_NO_RESPRING=1）"
               exit 0
           fi
-
           if command -v sbreload >/dev/null 2>&1; then
               sbreload >/dev/null 2>&1 || true
           else
               killall -9 SpringBoard >/dev/null 2>&1 || true
           fi
-
           exit 0
           JBEOF_5
           cat > JBHider/layout/usr/lib/jbhider/shims/ps <<'JBEOF_6'
@@ -688,26 +606,41 @@ jobs:
           exit 0
           JBEOF_8
           chmod 0755 JBHider/layout/DEBIAN/postinst JBHider/layout/usr/lib/jbhider/shims/*
-          echo "--- 生成的文件 ---"
           find JBHider -type f | sort
           wc -l JBHider/Tweak.xm
-
-      - name: 2. 安装 Theos
+      - name: 2. 环境自检
         run: |
-          brew install ldid xz || true
-          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          sw_vers
+          xcodebuild -version || true
+          which clang && clang --version | head -2
+          df -h / | tail -1
+      - name: 3. 安装 Theos（浅克隆）
+        run: |
+          set -e
+          date +%H:%M:%S
+          brew install ldid xz >/dev/null 2>&1 || true
+          git clone --depth 1 --recursive --shallow-submodules https://github.com/theos/theos.git "$HOME/theos"
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-
-      - name: 3. 安装 iOS SDK
+          du -sh "$HOME/theos" || true
+          date +%H:%M:%S
+      - name: 4. 只取一个 iOS SDK（不走整仓 1.5GB）
         run: |
+          set -e
+          date +%H:%M:%S
           mkdir -p "$HOME/theos/sdks"
-          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz -o /tmp/sdks.tar.gz
-          tar xzf /tmp/sdks.tar.gz -C /tmp
-          cp -R /tmp/sdks-master/*.sdk "$HOME/theos/sdks/" || true
+          cd /tmp
+          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git sdksrc
+          cd sdksrc
+          git sparse-checkout set iPhoneOS15.6.sdk || true
+          ls -1
+          cp -R iPhoneOS15.6.sdk "$HOME/theos/sdks/" 2>/dev/null || { echo "sparse 未命中，回退单 SDK 拉取"; cd /tmp && rm -rf sdksrc && git clone --depth 1 --filter=blob:none --no-checkout https://github.com/theos/sdks.git sdksrc && cd sdksrc && git sparse-checkout init --cone && git sparse-checkout set iPhoneOS15.6.sdk && git checkout && cp -R iPhoneOS15.6.sdk "$HOME/theos/sdks/"; }
           ls -1 "$HOME/theos/sdks"
-
-      - name: 4. 编译 deb
+          du -sh "$HOME/theos/sdks"
+          date +%H:%M:%S
+      - name: 5. 编译 deb
         run: |
+          set -e
+          date +%H:%M:%S
           export THEOS="$HOME/theos"
           export PATH="$THEOS/bin:$PATH"
           cd JBHider
@@ -715,10 +648,11 @@ jobs:
           make package FINALPACKAGE=1 DEBUG=0
           echo "--- 产物 ---"
           ls -lh packages/
-
-      - name: 5. 上传 deb
+          date +%H:%M:%S
+      - name: 6. 上传 deb
         uses: actions/upload-artifact@v4
         with:
           name: JBHider-deb
           path: JBHider/packages/*.deb
           if-no-files-found: error
+          retention-days: 7
